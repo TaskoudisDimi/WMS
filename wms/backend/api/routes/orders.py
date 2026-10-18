@@ -1,11 +1,18 @@
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import date as Date  # field below is named `date`
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from core.security import get_current_user
 from db.supabase_client import supabase
 from services.permissions import check_business_access
 from services.stock import apply_movement
+from services import mailer
+from services.documents import purchase_order_pdf
+from services.sales import product_index, record_sale
+from datetime import datetime, timezone
+from pydantic import EmailStr
+from typing import Literal
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
 
@@ -21,6 +28,7 @@ class OrderItemIn(BaseModel):
 class OrderCreate(BaseModel):
     business_id: str
     type: str
+    supplier_id: Optional[str] = None
     party_name: Optional[str] = None
     notes: Optional[str] = None
     items: List[OrderItemIn] = []
@@ -60,11 +68,20 @@ def create_order(body: OrderCreate, user_id: str = Depends(get_current_user)):
         if len(owned.data or []) != len(product_ids):
             raise HTTPException(400, "Unknown product in order")
 
+    party_name = body.party_name
+    if body.supplier_id:
+        sup = supabase.table("suppliers").select("name").eq("id", body.supplier_id) \
+            .eq("business_id", body.business_id).maybe_single().execute()
+        if not sup or not sup.data:
+            raise HTTPException(400, "Unknown supplier")
+        party_name = party_name or sup.data["name"]
+
     order_res = supabase.table("orders").insert({
         "business_id": body.business_id,
         "type": body.type,
         "status": "draft",
-        "party_name": body.party_name,
+        "supplier_id": body.supplier_id,
+        "party_name": party_name,
         "notes": body.notes,
         "created_by": user_id,
     }).execute()
@@ -149,3 +166,116 @@ def complete_order(order_id: str, user_id: str = Depends(get_current_user)):
         )
 
     return claimed.data[0]
+
+
+# ── Purchase order PDF / email to supplier ────────────────────────────────────
+
+def _po_context(order_id: str, user_id: str) -> tuple[dict, list, dict, dict | None, dict]:
+    order = supabase.table("orders").select("*").eq("id", order_id).maybe_single().execute()
+    if not order or not order.data:
+        raise HTTPException(404, "Order not found")
+    order = order.data
+    check_business_access(user_id, order["business_id"])
+    if order["type"] != "purchase":
+        raise HTTPException(400, "Only purchase orders can be sent to suppliers")
+    items = supabase.table("order_items").select("quantity, unit_price, products(sku, name, unit)") \
+        .eq("order_id", order_id).execute().data or []
+    business = supabase.table("businesses").select("name").eq("id", order["business_id"]).single().execute().data
+    supplier = None
+    if order.get("supplier_id"):
+        s = supabase.table("suppliers").select("*").eq("id", order["supplier_id"]).maybe_single().execute()
+        supplier = s.data if s else None
+    profile = supabase.table("users").select("full_name").eq("id", user_id).maybe_single().execute()
+    email = supabase.auth.admin.get_user_by_id(user_id).user.email
+    contact = {"name": (profile.data or {}).get("full_name") if profile else None, "email": email}
+    return order, items, business, supplier, contact
+
+
+@router.get("/{order_id}/pdf")
+def order_pdf(order_id: str, lang: Literal["el", "en"] = "el", user_id: str = Depends(get_current_user)):
+    order, items, business, supplier, contact = _po_context(order_id, user_id)
+    pdf = purchase_order_pdf(order, items, business, supplier, contact, lang)
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="PO-{order_id[:8].upper()}.pdf"'})
+
+
+class SendRequest(BaseModel):
+    to: Optional[EmailStr] = None
+    message: Optional[str] = Field(default=None, max_length=2000)
+    lang: Literal["el", "en"] = "el"
+
+
+@router.post("/{order_id}/send")
+def send_to_supplier(order_id: str, body: SendRequest, user_id: str = Depends(get_current_user)):
+    if not mailer.is_configured():
+        raise HTTPException(400, "Email sending is not configured on the server")
+    order, items, business, supplier, contact = _po_context(order_id, user_id)
+    to = body.to or (supplier or {}).get("email")
+    if not to:
+        raise HTTPException(400, "The supplier has no email address")
+    if order["status"] == "cancelled":
+        raise HTTPException(400, "Cancelled orders can't be sent")
+
+    number = order_id[:8].upper()
+    pdf = purchase_order_pdf(order, items, business, supplier, contact, body.lang)
+    el = body.lang == "el"
+    subject = f"Παραγγελία {number} — {business['name']}" if el else f"Purchase order {number} — {business['name']}"
+    default = ("Καλησπέρα,\n\nσας επισυνάπτουμε την παραγγελία μας. Παρακαλούμε επιβεβαιώστε διαθεσιμότητα και ημερομηνία παράδοσης."
+               if el else "Hello,\n\nplease find our purchase order attached. Kindly confirm availability and delivery date.")
+    text = f"{body.message or default}\n\n{contact.get('name') or ''}\n{business['name']}\n{contact['email']}".strip()
+    mailer.send(to, subject, text, attachments=[(f"PO-{number}.pdf", pdf, "application/pdf")], reply_to=contact["email"])
+
+    fields: dict = {"sent_at": datetime.now(timezone.utc).isoformat()}
+    if order["status"] == "draft":
+        fields["status"] = "confirmed"
+    supabase.table("orders").update(fields).eq("id", order_id).execute()
+    return {"sent_to": to}
+
+
+# ── Sales from another program (CSV/Excel export) ─────────────────────────────
+
+class SaleRow(BaseModel):
+    document: Optional[str] = Field(default=None, max_length=80)
+    date: Optional[Date] = None
+    customer: Optional[str] = Field(default=None, max_length=200)
+    sku: str = Field(min_length=1, max_length=64)
+    quantity: float = Field(gt=0)
+    unit_price: Optional[float] = Field(default=None, ge=0)
+
+
+class SalesImport(BaseModel):
+    business_id: str
+    rows: list[SaleRow] = Field(min_length=1, max_length=20000)
+    # Past sales the current stock count already reflects: record for forecasts only
+    update_stock: bool = True
+
+
+@router.post("/import-sales")
+def import_sales(body: SalesImport, user_id: str = Depends(get_current_user)):
+    """Group rows into documents and record each as a completed sale, once."""
+    check_business_access(user_id, body.business_id)
+    index = product_index(body.business_id)
+    docs: dict[str, dict] = {}
+    unmatched: set[str] = set()
+    for r in body.rows:
+        product = index.get(r.sku.strip().lower()) or index.get(r.sku.strip())
+        if not product:
+            unmatched.add(r.sku.strip())
+            continue
+        key = r.document or f"{r.date or ''}|{r.customer or ''}"
+        d = docs.setdefault(key, {"date": r.date, "customer": r.customer, "lines": {}})
+        price_qty = d["lines"].setdefault(product["id"], [0, r.unit_price])
+        price_qty[0] += int(round(r.quantity))
+
+    created = skipped = 0
+    for key, d in docs.items():
+        order = record_sale(
+            business_id=body.business_id, external_ref=f"file:{key}", party=d["customer"],
+            lines=[(pid, qty, price) for pid, (qty, price) in d["lines"].items() if qty > 0],
+            note=f"Import {key}" if not key.startswith("|") else "Import",
+            at=f"{d['date'].isoformat()}T12:00:00+00:00" if d["date"] else None,
+            affect_stock=body.update_stock, user_id=user_id,
+        )
+        created += 1 if order else 0
+        skipped += 0 if order else 1
+    return {"created": created, "skipped": skipped, "unmatched_skus": sorted(unmatched)[:100]}

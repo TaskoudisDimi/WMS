@@ -34,6 +34,7 @@ class ProductPlan:
     category: str | None
     unit: str | None
     supplier: str | None
+    supplier_id: str | None
     cost_price: float | None
     current_stock: int
     on_order: int
@@ -133,7 +134,8 @@ def plan_reorders(business_id: str, product_ids: list[str] | None = None) -> lis
     start = today - timedelta(days=HISTORY_DAYS)
 
     q = supabase.table("products") \
-        .select("id, sku, name, category, unit, supplier, cost_price, reorder_point, lead_time_days, created_at") \
+        .select("id, sku, name, category, unit, supplier, supplier_id, cost_price, reorder_point, lead_time_days, "
+                "min_order_qty, order_multiple, created_at") \
         .eq("business_id", business_id)
     if product_ids:
         q = q.in_("id", product_ids)
@@ -182,6 +184,11 @@ def plan_reorders(business_id: str, product_ids: list[str] | None = None) -> lis
         suggested = max(0, math.ceil(cover + safety - on_hand - incoming)) if (level > 0 or on_hand <= reorder_point) else 0
         if suggested == 0 and on_hand + incoming <= reorder_point:
             suggested = max(reorder_point * 2 - on_hand - incoming, 1)
+        if suggested > 0:
+            # Respect the supplier's minimum and pack size (e.g. boxes of 12)
+            suggested = max(suggested, int(p.get("min_order_qty") or 0))
+            pack = max(int(p.get("order_multiple") or 1), 1)
+            suggested = math.ceil(suggested / pack) * pack
 
         if on_hand <= reorder_point or (days_out is not None and days_out <= lead):
             urgency = "critical"
@@ -192,7 +199,7 @@ def plan_reorders(business_id: str, product_ids: list[str] | None = None) -> lis
 
         plans.append(ProductPlan(
             product_id=p["id"], sku=p["sku"], name=p["name"], category=p.get("category"), unit=p.get("unit"),
-            supplier=p.get("supplier"), cost_price=p.get("cost_price"),
+            supplier=p.get("supplier"), supplier_id=p.get("supplier_id"), cost_price=p.get("cost_price"),
             current_stock=on_hand, on_order=incoming, reorder_point=reorder_point, lead_time_days=lead,
             avg_daily=round(level, 2), forecast_7=round(f7, 1), forecast_30=round(f30, 1),
             safety_stock=safety, suggested_qty=suggested,

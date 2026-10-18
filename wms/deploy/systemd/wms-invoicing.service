@@ -1,0 +1,7 @@
+[Unit]
+Description=WMS invoicing software sync (Elorus)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@BACKEND_DIR@
+ExecStart=@BACKEND_DIR@/venv/bin/python scripts/sync_invoicing.py

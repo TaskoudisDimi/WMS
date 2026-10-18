@@ -17,17 +17,30 @@ def apply_movement(
     order_id: str | None = None,
     lot_code: str | None = None,
     expiry_date: date | str | None = None,
+    at: str | None = None,
+    affect_stock: bool = True,
 ) -> dict:
     """Record a movement and update stock atomically.
 
     inbound/outbound: `quantity` is the amount moved.
     adjustment: `quantity` is the new counted total.
+    at: when it happened (ISO), for history imported from elsewhere.
+    affect_stock=False records the movement (so forecasts learn from it) without
+    changing stock — for past sales the current count already reflects.
     Returns the inserted movement with `new_quantity`.
     """
     if type not in MOVEMENT_TYPES:
         raise ValueError(f"invalid movement type {type!r}")
 
     delta = quantity if type == "inbound" else -quantity if type == "outbound" else 0
+    if not affect_stock:
+        row = supabase.table("inventory_movements").insert({
+            "product_id": product_id, "business_id": business_id, "type": type, "quantity": quantity,
+            "delta": 0, "reason": reason, "order_id": order_id, "created_by": user_id,
+            **({"created_at": at} if at else {}),
+        }).execute()
+        return {**(row.data[0] if row.data else {}), "new_quantity": None}
+
     res = supabase.rpc("wms_adjust_stock", {
         "p_business": business_id,
         "p_product": product_id,
@@ -61,6 +74,7 @@ def apply_movement(
         "order_id": order_id,
         "lot_id": lot_id,
         "created_by": user_id,
+        **({"created_at": at} if at else {}),
     }).execute()
 
     return {**(movement.data[0] if movement.data else {}), "new_quantity": new_qty}

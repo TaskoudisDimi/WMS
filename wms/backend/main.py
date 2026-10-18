@@ -1,3 +1,4 @@
+import mimetypes
 import os
 from pathlib import Path
 
@@ -6,7 +7,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import (auth, user, business, datasets, predictions, products, inventory, orders, customers,
-                        alerts, integrations, ai)
+                        alerts, integrations, ai, suppliers, reports, onboarding)
+from core.monitoring import init_sentry
+
+init_sentry()
 from core.middleware import RefreshSessionMiddleware
 
 app = FastAPI()
@@ -34,10 +38,20 @@ app.include_router(customers.router)
 app.include_router(alerts.router)
 app.include_router(integrations.router)
 app.include_router(ai.router)
+app.include_router(suppliers.router)
+app.include_router(reports.router)
+app.include_router(onboarding.router)
 
 
 @app.get("/api/health", include_in_schema=False)
-def health():
+def health(deep: bool = False):
+    """Liveness for the uptime monitor; ?deep=1 also checks the database."""
+    if deep:
+        from db.supabase_client import supabase
+        try:
+            supabase.table("businesses").select("id").limit(1).execute()
+        except Exception:
+            raise HTTPException(503, "Database unreachable")
     return {"ok": True}
 
 
@@ -48,6 +62,8 @@ DIST_DIR = Path(os.getenv(
     "FRONTEND_DIST",
     Path(__file__).resolve().parent.parent / "frontend" / "ui" / "dist",
 )).resolve()
+
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 if DIST_DIR.is_dir():
     app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")

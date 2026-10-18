@@ -14,10 +14,10 @@ import hmac
 import json
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from core.config import FRONTEND_URL
@@ -25,6 +25,8 @@ from core.security import get_current_user
 from db.supabase_client import supabase
 from services.permissions import check_business_access
 from services.stock import apply_movement
+from services import elorus
+from services.secret_box import encrypt
 
 router = APIRouter(prefix="/api/integrations", tags=["Integrations"])
 log = logging.getLogger(__name__)
@@ -34,6 +36,9 @@ WOO_PROCESS_STATUSES = {"processing", "completed", "on-hold"}
 
 
 def _public(row: dict) -> dict:
+    if row["provider"] == "elorus":
+        # never send the (encrypted) API key back to the browser
+        return {**{k: v for k, v in row.items() if k != "secret"}, "webhook_url": None}
     return {**row, "webhook_url": f"{FRONTEND_URL}/api/integrations/webhook/{row['id']}"}
 
 
@@ -43,6 +48,14 @@ def _owned(integration_id: str, user_id: str) -> dict:
         raise HTTPException(404, "Integration not found")
     check_business_access(user_id, row.data["business_id"], min_role="admin")
     return row.data
+
+
+class ElorusConnect(BaseModel):
+    business_id: str
+    api_key: str = Field(min_length=10, max_length=200)
+    organization_id: str = Field(min_length=1, max_length=40)
+    # Import the last N days for forecasts only (stock untouched: it already reflects them)
+    history_days: int = Field(default=0, ge=0, le=365)
 
 
 class IntegrationCreate(BaseModel):
@@ -75,6 +88,42 @@ def create_integration(body: IntegrationCreate, user_id: str = Depends(get_curre
     except Exception:
         raise HTTPException(409, "This integration already exists")
     return _public(row)
+
+
+@router.post("/elorus")
+def connect_elorus(body: ElorusConnect, background: BackgroundTasks, user_id: str = Depends(get_current_user)):
+    check_business_access(user_id, body.business_id, min_role="admin")
+    try:
+        elorus.Elorus(body.api_key.strip(), body.organization_id.strip()).check()
+    except (elorus.ElorusError, Exception) as e:
+        raise HTTPException(400, f"Could not connect to Elorus: {e}")
+
+    now = datetime.now(timezone.utc)
+    fields = {"secret": encrypt(body.api_key.strip()), "enabled": True, "last_error": None,
+              # Only documents issued from now on reduce stock
+              "config": {"organization_id": body.organization_id.strip(), "start_at": now.isoformat()}}
+    existing = supabase.table("integrations").select("id").eq("business_id", body.business_id) \
+        .eq("provider", "elorus").maybe_single().execute()
+    if existing and existing.data:
+        row = supabase.table("integrations").update(fields).eq("id", existing.data["id"]).execute().data[0]
+    else:
+        row = supabase.table("integrations").insert(
+            {"business_id": body.business_id, "provider": "elorus", **fields}).execute().data[0]
+
+    if body.history_days:
+        background.add_task(elorus.sync, row, since=now - timedelta(days=body.history_days), until=now,
+                            affect_stock=False)
+    return _public(row)
+
+
+@router.post("/{integration_id}/sync")
+def sync_now(integration_id: str, user_id: str = Depends(get_current_user)):
+    row = _owned(integration_id, user_id)
+    if row["provider"] != "elorus":
+        raise HTTPException(400, "This integration syncs automatically via webhooks")
+    if not row["enabled"]:
+        raise HTTPException(400, "Integration is paused")
+    return elorus.sync(row)
 
 
 @router.patch("/{integration_id}")

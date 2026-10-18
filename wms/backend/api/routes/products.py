@@ -5,11 +5,13 @@ from core.security import get_current_user
 from db.supabase_client import supabase
 from services.permissions import check_business_access
 from services.stock import apply_movement
+from services.suppliers import resolve_supplier
 
 router = APIRouter(prefix="/api/products", tags=["Products"])
 
 EDITABLE = ("sku", "name", "category", "unit", "reorder_point", "cost_price", "sell_price",
-            "barcode", "supplier", "lead_time_days", "track_expiry")
+            "barcode", "supplier", "supplier_id", "lead_time_days", "track_expiry",
+            "min_order_qty", "order_multiple")
 
 
 class ProductFields(BaseModel):
@@ -22,8 +24,11 @@ class ProductFields(BaseModel):
     sell_price: Optional[float] = Field(default=None, ge=0)
     barcode: Optional[str] = Field(default=None, max_length=64)
     supplier: Optional[str] = Field(default=None, max_length=120)
+    supplier_id: Optional[str] = None
     lead_time_days: int = Field(default=7, ge=1, le=365)
     track_expiry: bool = False
+    min_order_qty: int = Field(default=0, ge=0)
+    order_multiple: int = Field(default=1, ge=1)
 
 
 class ProductCreate(ProductFields):
@@ -40,8 +45,27 @@ class ProductUpdate(BaseModel):
     sell_price: Optional[float] = Field(default=None, ge=0)
     barcode: Optional[str] = None
     supplier: Optional[str] = None
+    supplier_id: Optional[str] = None
     lead_time_days: Optional[int] = Field(default=None, ge=1, le=365)
     track_expiry: Optional[bool] = None
+    min_order_qty: Optional[int] = Field(default=None, ge=0)
+    order_multiple: Optional[int] = Field(default=None, ge=1)
+
+
+def _with_supplier(business_id: str, fields: dict, cache: dict | None = None) -> dict:
+    """Keep supplier_id and the denormalised supplier name consistent.
+    A supplier_id wins; otherwise a supplier name is resolved (created if new)."""
+    if fields.get("supplier_id"):
+        row = supabase.table("suppliers").select("name").eq("id", fields["supplier_id"]) \
+            .eq("business_id", business_id).maybe_single().execute()
+        if not row or not row.data:
+            raise HTTPException(400, "Unknown supplier")
+        fields["supplier"] = row.data["name"]
+    elif "supplier_id" in fields:          # explicitly cleared
+        fields["supplier"] = None
+    elif fields.get("supplier"):
+        fields["supplier_id"] = resolve_supplier(business_id, fields["supplier"], cache)
+    return fields
 
 
 def _clean(fields: dict) -> dict:
@@ -80,7 +104,7 @@ def lookup_product(business_id: str, code: str, user_id: str = Depends(get_curre
 @router.post("")
 def create_product(body: ProductCreate, user_id: str = Depends(get_current_user)):
     check_business_access(user_id, body.business_id)
-    fields = _clean(body.model_dump(include=set(EDITABLE)))
+    fields = _with_supplier(body.business_id, _clean(body.model_dump(include=set(EDITABLE))))
     res = supabase.table("products").insert({"business_id": body.business_id, **fields}).execute()
     if not res.data:
         raise HTTPException(500, "Failed to create product")
@@ -120,8 +144,10 @@ def import_products(body: ImportRequest, user_id: str = Depends(get_current_user
     existing = {p["sku"].lower(): p for p in (supabase.table("products").select("id, sku")
                 .eq("business_id", body.business_id).execute().data or [])}
     to_create, to_update, skipped = [], [], 0
+    supplier_cache: dict = {}
     for r in rows:
-        fields = _clean(r.model_dump(include=set(EDITABLE)))
+        fields = _with_supplier(body.business_id, _clean(r.model_dump(include=set(EDITABLE), exclude_unset=True)
+                                                        | {"sku": r.sku, "name": r.name}), supplier_cache)
         match = existing.get(r.sku.strip().lower())
         if match and not body.update_existing:
             skipped += 1
@@ -162,7 +188,7 @@ def update_product(
     if not p or not p.data:
         raise HTTPException(404, "Not found")
     check_business_access(user_id, p.data["business_id"])
-    fields = _clean(body.model_dump(exclude_unset=True))
+    fields = _with_supplier(p.data["business_id"], _clean(body.model_dump(exclude_unset=True)))
     if not fields:
         raise HTTPException(400, "No fields to update")
     res = supabase.table("products").update(fields).eq("id", product_id).execute()

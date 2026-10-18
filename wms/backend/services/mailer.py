@@ -15,7 +15,9 @@ def is_configured() -> bool:
     return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
 
 
-def send(to: str | list[str], subject: str, text: str, html_body: str | None = None) -> None:
+def send(to: str | list[str], subject: str, text: str, html_body: str | None = None,
+         attachments: list[tuple[str, bytes, str]] | None = None, reply_to: str | None = None) -> None:
+    """attachments: (filename, content, mime type) tuples."""
     if not is_configured():
         raise RuntimeError("SMTP is not configured (SMTP_HOST / SMTP_USER / SMTP_PASSWORD)")
     msg = EmailMessage()
@@ -23,9 +25,14 @@ def send(to: str | list[str], subject: str, text: str, html_body: str | None = N
     msg["From"] = formataddr((name, addr))
     msg["To"] = ", ".join(to) if isinstance(to, list) else to
     msg["Subject"] = subject
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg.set_content(text)
     if html_body:
         msg.add_alternative(html_body, subtype="html")
+    for filename, content, mime in attachments or []:
+        maintype, subtype = mime.split("/", 1)
+        msg.add_attachment(content, maintype=maintype, subtype=subtype, filename=filename)
 
     ctx = ssl.create_default_context()
     if SMTP_PORT == 465:

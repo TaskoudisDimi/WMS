@@ -1,0 +1,28 @@
+# Checks the live site every 10 minutes from outside the server.
+# A failed run makes GitHub email the repository owner (Settings → Notifications →
+# Actions → "Send notifications for failed workflows only").
+# Note: GitHub pauses scheduled workflows after 60 days without repository activity.
+name: Uptime
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: App and database respond
+        run: |
+          for attempt in 1 2 3; do
+            if curl -fsS --max-time 15 "https://wms.task-code.com/api/health?deep=1"; then
+              echo; echo "✓ healthy"; exit 0
+            fi
+            echo "attempt $attempt failed, retrying in 20s"; sleep 20
+          done
+          echo "::error::wms.task-code.com is down or can't reach its database"
+          exit 1
+      - name: Home page loads
+        run: curl -fsS --max-time 15 -o /dev/null https://wms.task-code.com/

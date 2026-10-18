@@ -39,6 +39,14 @@ class FakeTable:
     def gte(self, col, val): self.preds.append(lambda r: r.get(col) is not None and r[col] >= val); return self
     def lt(self, col, val): self.preds.append(lambda r: r.get(col) is not None and r[col] < val); return self
     def lte(self, col, val): self.preds.append(lambda r: r.get(col) is not None and r[col] <= val); return self
+    def like(self, col, pat): pre = pat.strip('%'); self.preds.append(lambda r: pre in str(r.get(col) or '')); return self
+    @property
+    def not_(self):
+        outer = self
+        class _Not:
+            def is_(self_inner, col, val):
+                outer.preds.append(lambda r: r.get(col) is not None); return outer
+        return _Not()
     def maybe_single(self): self.single = True; return self
     def single(self): self.single = True; return self
 

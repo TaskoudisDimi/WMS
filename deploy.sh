@@ -95,7 +95,7 @@ for unit in "$DEPLOY_DIR"/wms/deploy/systemd/*; do
 done
 chmod +x "$BACKEND"/scripts/*.sh
 systemctl daemon-reload
-systemctl enable -q --now wms-alerts.timer
+systemctl enable -q --now wms-alerts.timer wms-invoicing.timer
 systemctl enable -q --now wms-backup.timer
 
 step "restarting backend"

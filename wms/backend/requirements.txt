@@ -9,3 +9,5 @@ numpy==2.4.4
 pandas==3.0.2
 joblib==1.5.3
 scikit-learn==1.8.0
+fpdf2==2.8.9
+sentry-sdk[fastapi]==2.71.0

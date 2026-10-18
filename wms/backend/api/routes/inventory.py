@@ -112,15 +112,16 @@ def create_purchase_orders(body: PurchaseOrdersRequest, user_id: str = Depends(g
     for p in plans:
         qty = body.quantities.get(p.product_id, p.suggested_qty)
         if qty > 0:
-            by_supplier[p.supplier or ""].append((p, qty))
+            by_supplier[p.supplier_id or ""].append((p, qty))
     if not by_supplier:
         raise HTTPException(400, "Nothing to order")
 
     created = []
-    for supplier, lines in by_supplier.items():
+    for supplier_id, lines in by_supplier.items():
         order = supabase.table("orders").insert({
             "business_id": body.business_id, "type": "purchase", "status": "draft",
-            "party_name": supplier or None, "notes": "Reorder suggestion", "created_by": user_id,
+            "supplier_id": supplier_id or None, "party_name": lines[0][0].supplier,
+            "notes": "Reorder suggestion", "created_by": user_id,
         }).execute().data[0]
         supabase.table("order_items").insert([{
             "order_id": order["id"], "product_id": p.product_id, "quantity": qty, "unit_price": p.cost_price,
