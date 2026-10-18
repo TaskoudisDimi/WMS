@@ -21,8 +21,11 @@ interface Product {
   sell_price: number | null
   barcode: string | null
   supplier: string | null
+  supplier_id: string | null
   lead_time_days: number
   track_expiry: boolean
+  min_order_qty: number
+  order_multiple: number
 }
 
 const products   = ref<Product[]>([])
@@ -53,8 +56,15 @@ function onScanned(code: string) {
 const emptyForm = () => ({
   sku: '', name: '', category: '', unit: 'τεμ',
   reorder_point: 0, cost_price: '', sell_price: '',
-  barcode: '', supplier: '', lead_time_days: 7, track_expiry: false,
+  barcode: '', supplier_id: '', lead_time_days: 7, track_expiry: false,
+  min_order_qty: 0, order_multiple: 1,
 })
+const suppliers = ref<{ id: string; name: string; lead_time_days: number | null }[]>([])
+
+function onSupplierChange() {
+  const s = suppliers.value.find(x => x.id === form.value.supplier_id)
+  if (s?.lead_time_days && !editId.value) form.value.lead_time_days = s.lead_time_days
+}
 const form = ref(emptyForm())
 
 const businessId = computed(() => auth.currentBusiness?.id ?? '')
@@ -63,8 +73,12 @@ async function load() {
   if (!businessId.value) { loading.value = false; return }
   loading.value = true; error.value = ''
   try {
-    const r = await api.get('/products', { params: { business_id: businessId.value } })
+    const [r, sup] = await Promise.all([
+      api.get('/products', { params: { business_id: businessId.value } }),
+      api.get('/suppliers', { params: { business_id: businessId.value } }),
+    ])
     products.value = r.data
+    suppliers.value = sup.data
   } catch { error.value = t('wms.errorLoad') }
   finally { loading.value = false }
 }
@@ -84,8 +98,9 @@ function openEdit(p: Product) {
     unit: p.unit, reorder_point: p.reorder_point,
     cost_price: p.cost_price != null ? String(p.cost_price) : '',
     sell_price: p.sell_price != null ? String(p.sell_price) : '',
-    barcode: p.barcode ?? '', supplier: p.supplier ?? '',
+    barcode: p.barcode ?? '', supplier_id: p.supplier_id ?? '',
     lead_time_days: p.lead_time_days ?? 7, track_expiry: !!p.track_expiry,
+    min_order_qty: p.min_order_qty ?? 0, order_multiple: p.order_multiple ?? 1,
   }
   showModal.value = true
 }
@@ -103,7 +118,9 @@ async function save() {
       cost_price: form.value.cost_price !== '' ? Number(form.value.cost_price) : null,
       sell_price: form.value.sell_price !== '' ? Number(form.value.sell_price) : null,
       barcode: form.value.barcode || null,
-      supplier: form.value.supplier || null,
+      supplier_id: form.value.supplier_id || null,
+      min_order_qty: Math.max(0, Number(form.value.min_order_qty) || 0),
+      order_multiple: Math.max(1, Number(form.value.order_multiple) || 1),
       lead_time_days: Math.max(1, Number(form.value.lead_time_days) || 7),
       track_expiry: form.value.track_expiry,
     }
@@ -257,7 +274,11 @@ async function confirmDelete(id: string) {
               <div class="form-2col">
                 <div class="form-row">
                   <label class="label">{{ t('wms.products.table.supplier') }}</label>
-                  <input v-model="form.supplier" class="input" />
+                  <select v-model="form.supplier_id" class="input" @change="onSupplierChange">
+                    <option value="">—</option>
+                    <option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.name }}</option>
+                  </select>
+                  <router-link to="/suppliers" class="hint-link">{{ t('suppliers.manage') }}</router-link>
                 </div>
                 <div class="form-row">
                   <label class="label">{{ t('wms.products.table.leadTime') }}</label>
@@ -267,6 +288,16 @@ async function confirmDelete(id: string) {
               <div class="form-row">
                 <label class="label">{{ t('wms.products.table.reorderPoint') }}</label>
                 <input v-model="form.reorder_point" class="input" type="number" min="0" />
+              </div>
+              <div class="form-2col">
+                <div class="form-row">
+                  <label class="label">{{ t('wms.products.minOrderQty') }}</label>
+                  <input v-model="form.min_order_qty" class="input" type="number" min="0" />
+                </div>
+                <div class="form-row">
+                  <label class="label">{{ t('wms.products.orderMultiple') }}</label>
+                  <input v-model="form.order_multiple" class="input" type="number" min="1" />
+                </div>
               </div>
               <label class="ui-check"><input v-model="form.track_expiry" type="checkbox" /> {{ t('wms.products.trackExpiry') }}</label>
               <div class="form-2col">
@@ -304,6 +335,7 @@ async function confirmDelete(id: string) {
 .search .ui-input { flex: 1; }
 .with-btn { display: flex; gap: .4rem; align-items: center; }
 .with-btn .input { flex: 1; }
+.hint-link { font-size: .78rem; color: var(--accent); margin-top: .2rem; }
 .empty-actions { display: flex; gap: .5rem; justify-content: center; }
 .page {
   padding: 2rem;

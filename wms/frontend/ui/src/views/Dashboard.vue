@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 import { intlLocale } from '@/i18n/format'
 import { api } from '@/services/api'
+import OnboardingGuide from '@/components/onboarding/OnboardingGuide.vue'
 
 const auth  = useAuthStore()
 const { t } = useI18n()
@@ -26,6 +27,8 @@ const ordersLoaded = ref(false)
 
 interface Anomaly { kind: 'sales_drop' | 'sales_spike' | 'stock_loss' | 'revenue_drop'; severity: string; name?: string; sku?: string; actual: number; expected: number }
 const anomalies = ref<Anomaly[]>([])
+// A brand-new business sees the welcome steps instead of empty KPIs
+const guide = ref<'welcome' | 'checklist' | 'hidden'>('hidden')
 
 const businessId = computed(() => auth.currentBusiness?.id ?? '')
 
@@ -86,7 +89,8 @@ function fmtNum(n: number | null) {
 </script>
 
 <template>
-  <div class="dash">
+  <OnboardingGuide @state="guide = $event" />
+  <div v-if="guide !== 'welcome'" class="dash">
 
     <!-- Header -->
     <div class="header">

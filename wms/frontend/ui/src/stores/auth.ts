@@ -16,6 +16,7 @@ export interface Business {
   owner_id: string
   created_at: string
   alert_email_enabled?: boolean
+  is_demo?: boolean
 }
 
 export type Role = 'owner' | 'admin' | 'member'
@@ -111,6 +112,7 @@ export const useAuthStore = defineStore('auth', {
     async logout(router?: Router): Promise<void> {
       try { await api.post('/auth/logout') } catch { /* ignore */ }
       finally {
+        await this.clearOfflineData()
         this.resetAuth()
         if (router) router.push('/login')
       }
@@ -121,6 +123,11 @@ export const useAuthStore = defineStore('auth', {
       if (!next) return
       this.business = next
       try { localStorage.setItem(BUSINESS_KEY, id) } catch { /* storage unavailable */ }
+    },
+
+    /** Drop data kept for offline use, so the next person on a shared device can't see it */
+    async clearOfflineData(): Promise<void> {
+      try { if ('caches' in window) await caches.delete('wms-api') } catch { /* ignore */ }
     },
 
     resetAuth(): void {

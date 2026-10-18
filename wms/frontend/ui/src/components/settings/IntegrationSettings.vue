@@ -5,8 +5,11 @@ import { useAuthStore, apiErrorMessage } from '@/stores/auth'
 import { api } from '@/services/api'
 import { intlLocale } from '@/i18n/format'
 
-type Provider = 'woocommerce' | 'shopify'
-interface Integration { id: string; provider: Provider; secret: string; enabled: boolean; webhook_url: string; last_event_at: string | null }
+type Provider = 'woocommerce' | 'shopify' | 'elorus'
+interface Integration {
+  id: string; provider: Provider; secret?: string; enabled: boolean; webhook_url: string | null; last_event_at: string | null
+  last_sync_at?: string | null; last_error?: string | null
+}
 
 const { t } = useI18n()
 const auth = useAuthStore()
@@ -15,6 +18,32 @@ const list = ref<Integration[]>([])
 const error = ref('')
 const shopifySecret = ref('')
 const copied = ref('')
+
+// Elorus
+const elorusKey = ref('')
+const elorusOrg = ref('')
+const historyDays = ref(90)
+const connecting = ref(false)
+const syncing = ref(false)
+const syncResult = ref<{ imported: number; already: number; documents: number; unmatched_skus: string[]; error?: string } | null>(null)
+
+async function connectElorus() {
+  connecting.value = true; error.value = ''
+  try {
+    await api.post('/integrations/elorus', { business_id: bid.value, api_key: elorusKey.value.trim(),
+      organization_id: elorusOrg.value.trim(), history_days: historyDays.value })
+    elorusKey.value = ''; elorusOrg.value = ''
+    await load()
+  } catch (e) { error.value = apiErrorMessage(e) || t('common.error') }
+  finally { connecting.value = false }
+}
+
+async function syncNow(i: Integration) {
+  syncing.value = true; syncResult.value = null
+  try { syncResult.value = (await api.post(`/integrations/${i.id}/sync`, null, { timeout: 180_000 })).data; await load() }
+  catch (e) { error.value = apiErrorMessage(e) || t('common.error') }
+  finally { syncing.value = false }
+}
 
 const byProvider = (p: Provider) => list.value.find(i => i.provider === p)
 
@@ -50,6 +79,59 @@ async function copy(text: string, what: string) {
 </script>
 
 <template>
+  <div class="ui-card invoicing">
+    <div class="ui-card-head">
+      <div>
+        <p class="ui-card-title">{{ t('invoicing.title') }}</p>
+        <p class="ui-card-sub">{{ t('invoicing.sub') }}</p>
+      </div>
+    </div>
+    <section class="ui-card-body provider">
+      <div class="p-head">
+        <strong>Elorus</strong>
+        <template v-if="byProvider('elorus')">
+          <span class="ui-badge" :class="byProvider('elorus')!.last_error ? 'ui-badge--red' : byProvider('elorus')!.enabled ? 'ui-badge--green' : ''">
+            {{ byProvider('elorus')!.last_error ? t('invoicing.error') : byProvider('elorus')!.enabled ? t('integrations.active') : t('integrations.paused') }}
+          </span>
+          <span v-if="byProvider('elorus')!.last_sync_at" class="ui-muted small">
+            {{ t('invoicing.lastSync', { when: new Date(byProvider('elorus')!.last_sync_at!).toLocaleString(intlLocale()) }) }}
+          </span>
+        </template>
+      </div>
+
+      <template v-if="byProvider('elorus')">
+        <p v-if="byProvider('elorus')!.last_error" class="ui-alert ui-alert--error">{{ byProvider('elorus')!.last_error }}</p>
+        <p class="ui-hint">{{ t('invoicing.howItWorks') }}</p>
+        <p v-if="syncResult" class="ui-alert" :class="syncResult.error ? 'ui-alert--error' : 'ui-alert--success'">
+          {{ syncResult.error || t('invoicing.syncResult', { imported: syncResult.imported, docs: syncResult.documents }) }}
+          <template v-if="syncResult.unmatched_skus?.length"><br>{{ t('invoicing.unmatched') }} {{ syncResult.unmatched_skus.join(', ') }}</template>
+        </p>
+        <div class="actions">
+          <button class="ui-btn ui-btn--primary ui-btn--sm" :disabled="syncing || !byProvider('elorus')!.enabled" @click="syncNow(byProvider('elorus')!)">
+            <span v-if="syncing" class="ui-spinner" />{{ t('invoicing.syncNow') }}
+          </button>
+          <button class="ui-btn ui-btn--ghost ui-btn--sm" @click="toggle(byProvider('elorus')!)">{{ byProvider('elorus')!.enabled ? t('integrations.pause') : t('integrations.resume') }}</button>
+          <button class="ui-btn ui-btn--danger ui-btn--sm" @click="remove(byProvider('elorus')!)">{{ t('integrations.disconnect') }}</button>
+        </div>
+      </template>
+
+      <template v-else>
+        <p class="ui-hint">{{ t('invoicing.elorusSetup') }}</p>
+        <div class="ui-grid-2">
+          <div class="ui-field"><label class="ui-label">API key</label><input v-model="elorusKey" class="ui-input ui-input--sm ui-mono" autocomplete="off" /></div>
+          <div class="ui-field"><label class="ui-label">Organization ID</label><input v-model="elorusOrg" class="ui-input ui-input--sm ui-mono" autocomplete="off" /></div>
+        </div>
+        <label class="ui-check"><input type="checkbox" :checked="historyDays > 0" @change="historyDays = ($event.target as HTMLInputElement).checked ? 90 : 0" /> {{ t('invoicing.history') }}</label>
+        <div><button class="ui-btn ui-btn--primary ui-btn--sm" :disabled="connecting || elorusKey.length < 10 || !elorusOrg" @click="connectElorus">
+          <span v-if="connecting" class="ui-spinner" />{{ t('integrations.connect') }}
+        </button></div>
+      </template>
+    </section>
+    <p class="ui-card-body ui-hint">
+      {{ t('invoicing.otherPrograms') }} <router-link to="/orders" class="link">{{ t('salesImport.button') }} →</router-link>
+    </p>
+  </div>
+
   <div class="ui-card">
     <div class="ui-card-head">
       <div>
@@ -77,14 +159,14 @@ async function copy(text: string, what: string) {
           <label class="ui-label">{{ t('integrations.url') }}</label>
           <div class="copy-row">
             <input class="ui-input ui-input--sm ui-mono" readonly :value="byProvider(p)!.webhook_url" />
-            <button class="ui-btn ui-btn--ghost ui-btn--sm" @click="copy(byProvider(p)!.webhook_url, p + 'url')">{{ copied === p + 'url' ? t('draft.copied') : t('draft.copy') }}</button>
+            <button class="ui-btn ui-btn--ghost ui-btn--sm" @click="copy(byProvider(p)!.webhook_url ?? '', p + 'url')">{{ copied === p + 'url' ? t('draft.copied') : t('draft.copy') }}</button>
           </div>
         </div>
         <div v-if="p === 'woocommerce'" class="ui-field">
           <label class="ui-label">{{ t('integrations.secret') }}</label>
           <div class="copy-row">
             <input class="ui-input ui-input--sm ui-mono" readonly :value="byProvider(p)!.secret" />
-            <button class="ui-btn ui-btn--ghost ui-btn--sm" @click="copy(byProvider(p)!.secret, p + 'secret')">{{ copied === p + 'secret' ? t('draft.copied') : t('draft.copy') }}</button>
+            <button class="ui-btn ui-btn--ghost ui-btn--sm" @click="copy(byProvider(p)!.secret ?? '', p + 'secret')">{{ copied === p + 'secret' ? t('draft.copied') : t('draft.copy') }}</button>
           </div>
         </div>
         <p class="ui-hint">{{ t(`integrations.steps.${p}`) }}</p>
@@ -114,4 +196,6 @@ async function copy(text: string, what: string) {
 .copy-row .ui-input { flex: 1; }
 .actions { display: flex; gap: .5rem; }
 .small { font-size: .8rem; }
+.invoicing { margin-bottom: 1.25rem; }
+.link { color: var(--accent); }
 </style>

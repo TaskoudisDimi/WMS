@@ -25,6 +25,8 @@ const routes = [
       { path: 'products',   component: () => import('@/views/wms/Products.vue') },
       { path: 'orders',     component: () => import('@/views/wms/Orders.vue') },
       { path: 'stocktake',  component: () => import('@/views/wms/StocktakePage.vue') },
+      { path: 'suppliers',  component: () => import('@/views/wms/SuppliersPage.vue') },
+      { path: 'reports',    component: () => import('@/views/ReportsPage.vue') },
       { path: 'assistant',  component: () => import('@/views/AssistantPage.vue') },
     ],
   },

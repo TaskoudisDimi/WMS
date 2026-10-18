@@ -4,11 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 import PrefsToggles from '@/components/PrefsToggles.vue'
+import { useInstall, useOnline } from '@/composables/useNetwork'
 
 const auth   = useAuthStore()
 const route  = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const online = useOnline()
+const { canInstall, install } = useInstall()
 
 const showUserMenu = ref(false)
 
@@ -24,6 +27,8 @@ const pageTitle = computed(() => {
     '/orders':    t('nav.orders'),
     '/stocktake': t('nav.stocktake'),
     '/assistant': t('nav.assistant'),
+    '/suppliers': t('nav.suppliers'),
+    '/reports':   t('nav.reports'),
   }
   return map[route.path] || ''
 })
@@ -40,6 +45,8 @@ const pageSub = computed(() => {
     '/orders':    t('topbar.sub.orders'),
     '/stocktake': t('topbar.sub.stocktake'),
     '/assistant': t('topbar.sub.assistant'),
+    '/suppliers': t('topbar.sub.suppliers'),
+    '/reports':   t('topbar.sub.reports'),
   }
   return map[route.path] || ''
 })
@@ -73,6 +80,7 @@ const goSettings = () => { showUserMenu.value = false; router.push('/settings') 
     </div>
 
     <div class="actions">
+      <span v-if="!online" class="offline">{{ t('topbar.offline') }}</span>
       <PrefsToggles />
 
       <div ref="menuHost" class="menu-host">
@@ -95,6 +103,10 @@ const goSettings = () => { showUserMenu.value = false; router.push('/settings') 
               </button>
               <div class="menu-sep" />
             </template>
+            <button v-if="canInstall" class="menu-item" role="menuitem" @click="install(); showUserMenu = false">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M12 7v7M9 11l3 3 3-3"/></svg>
+              {{ t('topbar.install') }}
+            </button>
             <button class="menu-item" role="menuitem" @click="goSettings">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
               {{ t('nav.settings') }}
@@ -159,6 +171,7 @@ const goSettings = () => { showUserMenu.value = false; router.push('/settings') 
   background: transparent; font-size: .875rem; color: var(--text-sub); text-align: left; cursor: pointer;
 }
 .menu-item:hover { background: var(--bg-hover); color: var(--text); }
+.offline { font-size: .78rem; font-weight: 550; color: var(--amber); background: rgba(var(--amber-rgb), .12); padding: .2rem .55rem; border-radius: 99px; }
 .menu-label { font-size: .75rem; color: var(--text-muted); padding: .35rem .6rem .2rem; }
 .menu-sep { height: 1px; background: var(--border-light); margin: .3rem 0; }
 .check { width: 14px; color: var(--accent); font-weight: 700; }

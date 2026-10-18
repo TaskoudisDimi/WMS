@@ -5,6 +5,8 @@ import { useI18n } from 'vue-i18n'
 import { intlLocale } from '@/i18n/format'
 import { api } from '@/services/api'
 import ScanInvoiceModal from '@/components/orders/ScanInvoiceModal.vue'
+import SendToSupplierModal from '@/components/orders/SendToSupplierModal.vue'
+import ImportSalesModal from '@/components/orders/ImportSalesModal.vue'
 
 const auth = useAuthStore()
 const { t } = useI18n()
@@ -12,7 +14,9 @@ const { t } = useI18n()
 interface Order {
   id: string; type: 'purchase' | 'sale'; status: string
   party_name: string | null; notes: string | null; created_at: string
+  supplier_id: string | null; sent_at: string | null; external_ref: string | null
 }
+interface Supplier { id: string; name: string; email: string | null }
 
 interface Product { id: string; sku: string; name: string; unit: string }
 
@@ -27,10 +31,16 @@ const showModal = ref(false)
 const saving    = ref(false)
 const completing = ref<string | null>(null)
 const showScan  = ref(false)
+const showSalesImport = ref(false)
+const sendFor   = ref<Order | null>(null)
+const suppliers = ref<Supplier[]>([])
+const supplierOf = (o: Order) => suppliers.value.find(s => s.id === o.supplier_id) ?? null
+const pdfUrl = (o: Order) => `${api.defaults.baseURL}/orders/${o.id}/pdf`
 
 const form = ref({
   type: 'purchase' as 'purchase' | 'sale',
   party_name: '',
+  supplier_id: '',
   notes: '',
   items: [{ product_id: '', quantity: 1, unit_price: '' }] as LineItem[],
 })
@@ -50,6 +60,7 @@ async function load() {
       api.get('/orders', { params: { business_id: businessId.value } }),
       api.get('/products', { params: { business_id: businessId.value } }),
     ])
+    api.get('/suppliers', { params: { business_id: businessId.value } }).then(r => { suppliers.value = r.data }).catch(() => {})
     orders.value   = ordRes.status === 'fulfilled' ? ordRes.value.data : []
     products.value = prdRes.status === 'fulfilled' ? prdRes.value.data : []
   } catch { error.value = t('wms.errorLoad') }
@@ -60,7 +71,7 @@ onMounted(load)
 
 function openCreate() {
   form.value = {
-    type: 'purchase', party_name: '', notes: '',
+    type: 'purchase', party_name: '', supplier_id: '', notes: '',
     items: [{ product_id: '', quantity: 1, unit_price: '' }],
   }
   showModal.value = true
@@ -88,6 +99,7 @@ async function save() {
       business_id: businessId.value,
       type: form.value.type,
       party_name: form.value.party_name || null,
+      supplier_id: form.value.type === 'purchase' && form.value.supplier_id ? form.value.supplier_id : null,
       notes: form.value.notes || null,
       items: validItems,
     })
@@ -127,6 +139,7 @@ const STATUS_CLASS: Record<string, string> = {
   <div class="page">
 
     <div class="page-header">
+      <button class="ui-btn ui-btn--ghost ui-btn--sm" @click="showSalesImport = true">{{ t('salesImport.button') }}</button>
       <button class="ui-btn ui-btn--ghost ui-btn--sm" @click="showScan = true">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>
         {{ t('scanInvoice.button') }}
@@ -188,7 +201,11 @@ const STATUS_CLASS: Record<string, string> = {
                   {{ t(`wms.orders.type.${o.type}`) }}
                 </span>
               </td>
-              <td class="fw">{{ o.party_name || '—' }}</td>
+              <td class="fw">
+                {{ o.party_name || '—' }}
+                <span v-if="o.sent_at" class="ui-badge ui-badge--blue sent">{{ t('po.sent') }}</span>
+                <span v-if="o.external_ref" class="ui-badge sent">{{ o.external_ref.split(':')[0] === 'elorus' ? 'Elorus' : t('salesImport.badge') }}</span>
+              </td>
               <td>
                 <span class="status-badge" :class="STATUS_CLASS[o.status]">
                   {{ t(`wms.orders.status.${o.status}`) }}
@@ -197,6 +214,10 @@ const STATUS_CLASS: Record<string, string> = {
               <td class="muted">{{ fmtDate(o.created_at) }}</td>
               <td class="act">
                 <div class="row-actions">
+                  <template v-if="o.type === 'purchase' && o.status !== 'cancelled'">
+                    <a class="btn-sm" :href="pdfUrl(o)" target="_blank" rel="noopener" title="PDF">PDF</a>
+                    <button v-if="o.status !== 'completed'" class="btn-sm" @click="sendFor = o">{{ t('po.sendShort') }}</button>
+                  </template>
                   <template v-if="o.status !== 'completed' && o.status !== 'cancelled'">
                     <button class="btn-sm btn-sm--confirm"
                       :disabled="completing === o.id"
@@ -242,7 +263,14 @@ const STATUS_CLASS: Record<string, string> = {
                   </button>
                 </div>
               </div>
-              <div class="form-row">
+              <div v-if="form.type === 'purchase' && suppliers.length" class="form-row">
+                <label class="label">{{ t('wms.products.table.supplier') }}</label>
+                <select v-model="form.supplier_id" class="input" @change="form.party_name = suppliers.find(s => s.id === form.supplier_id)?.name ?? ''">
+                  <option value="">—</option>
+                  <option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.name }}</option>
+                </select>
+              </div>
+              <div v-else class="form-row">
                 <label class="label">{{ t('wms.orders.modal.party') }}</label>
                 <input v-model="form.party_name" class="input" :placeholder="t('wms.orders.modal.partyPlaceholder')" />
               </div>
@@ -287,6 +315,9 @@ const STATUS_CLASS: Record<string, string> = {
     </Teleport>
 
     <ScanInvoiceModal v-if="showScan" :business-id="businessId" :products="products" @close="showScan = false" @created="load" />
+    <ImportSalesModal v-if="showSalesImport" :business-id="businessId" @close="showSalesImport = false" @imported="load" />
+    <SendToSupplierModal v-if="sendFor" :order-id="sendFor.id" :supplier-email="supplierOf(sendFor)?.email ?? null"
+      :supplier-name="sendFor.party_name" @close="sendFor = null" @sent="load" />
   </div>
 </template>
 
@@ -380,6 +411,8 @@ const STATUS_CLASS: Record<string, string> = {
 .status--cancelled { background: var(--red-bg); color: var(--red); border: 1px solid rgba(var(--red-rgb), .2); }
 
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: .3rem; opacity: 0; transition: opacity .15s; }
+@media (hover: none) { .row-actions { opacity: 1; } }
+.sent { margin-left: .4rem; vertical-align: middle; }
 .tbl tbody tr:hover .row-actions { opacity: 1; }
 
 .btn-sm {

@@ -9,7 +9,9 @@
     "products": "Products",
     "orders": "Orders",
     "assistant": "Assistant",
-    "stocktake": "Stock-take"
+    "stocktake": "Stock-take",
+    "reports": "Reports",
+    "suppliers": "Suppliers"
   },
   "sidebar": {
     "analytics": "Analytics",
@@ -30,9 +32,13 @@
       "products": "SKU catalog & pricing",
       "orders": "Purchase & sales orders",
       "assistant": "Ask about your sales, stock and customers",
-      "stocktake": "Count stock and fix differences"
+      "stocktake": "Count stock and fix differences",
+      "reports": "Stock value, best sellers, margins",
+      "suppliers": "Who you buy from"
     },
-    "switchBusiness": "Switch business"
+    "switchBusiness": "Switch business",
+    "offline": "Offline",
+    "install": "Install app"
   },
   "common": {
     "save": "Save",
@@ -265,7 +271,9 @@
         "editTitle": "Edit Product"
       },
       "search": "Search products",
-      "trackExpiry": "Track lots and expiry dates"
+      "trackExpiry": "Track lots and expiry dates",
+      "minOrderQty": "Minimum order qty",
+      "orderMultiple": "Sold in packs of"
     },
     "inventory": {
       "subtitle": "Stock levels & movements",
@@ -695,7 +703,11 @@
     "diff": "Difference",
     "note": "Note (optional), e.g. Monthly count",
     "apply": "Apply {n} differences",
-    "applied": "Stock updated for {n} products."
+    "applied": "Stock updated for {n} products.",
+    "offline": "No connection.",
+    "pending": "{n} count(s) waiting to be sent.",
+    "queued": "Saved on this device — it will be applied automatically when the connection returns.",
+    "syncedOffline": "{n} count(s) made offline were applied."
   },
   "scanInvoice": {
     "button": "Scan invoice",
@@ -810,5 +822,168 @@
     "termsTitle": "Terms of service",
     "updated": "Last updated {date}",
     "consent": "By creating an account you agree to the {terms} and the {privacy}."
+  },
+  "suppliers": {
+    "add": "Add supplier",
+    "search": "Search suppliers",
+    "name": "Name",
+    "contact": "Contact",
+    "contactName": "Contact person",
+    "email": "Email",
+    "phone": "Phone",
+    "vat": "VAT no.",
+    "address": "Address",
+    "notes": "Notes",
+    "leadTime": "Lead time (days)",
+    "minOrder": "Minimum order (€)",
+    "products": "Products",
+    "days": "{n} days",
+    "noEmail": "no email",
+    "emptyTitle": "No suppliers yet",
+    "emptyHint": "Add the companies you buy from to send them purchase orders by email.",
+    "emailHint": "With an email address you can send purchase orders as PDF directly from WMS.",
+    "exists": "A supplier with this name already exists.",
+    "manage": "Manage suppliers",
+    "confirmDelete": "Delete {name}? Its {n} products stay, without a supplier."
+  },
+  "po": {
+    "sendTitle": "Send purchase order",
+    "sendShort": "Send",
+    "to": "To",
+    "message": "Message",
+    "messagePlaceholder": "Optional — a default message is used if empty",
+    "language": "PDF language",
+    "preview": "Preview PDF",
+    "send": "Send with PDF",
+    "sent": "sent",
+    "replyHint": "The supplier's reply comes to your email address. Draft orders are marked confirmed once sent."
+  },
+  "salesImport": {
+    "button": "Import sales",
+    "title": "Import sales from a file",
+    "badge": "imported",
+    "subtitle": "Export sales lines from your invoicing program (Epsilon, SoftOne, Prisma, Oxygen…) as Excel or CSV.",
+    "fields": {
+      "document": "Document no.",
+      "date": "Date",
+      "customer": "Customer",
+      "sku": "Product code",
+      "quantity": "Quantity",
+      "unit_price": "Unit price"
+    },
+    "summary": "{lines} lines in {docs} documents",
+    "submit": "Import {n} documents",
+    "updateStock": "These sales should reduce stock",
+    "updateHint": "Use for sales not yet counted in your stock (e.g. today's). Each document is imported once, even if you upload the file again.",
+    "historyHint": "Past sales your stock count already includes: recorded for reports and forecasts only.",
+    "done": "{created} documents imported, {skipped} were already there.",
+    "unmatched": "{n} product codes not found:"
+  },
+  "invoicing": {
+    "title": "Invoicing software",
+    "sub": "Sales you invoice elsewhere take stock out here automatically.",
+    "elorusSetup": "In Elorus: User profile → API key, and Settings → Organization for the organization ID.",
+    "history": "Also import the last 90 days for forecasts (doesn't change stock)",
+    "howItWorks": "New documents are checked every 15 minutes and matched by product code. Only documents issued after connecting reduce stock.",
+    "lastSync": "Last sync {when}",
+    "syncNow": "Sync now",
+    "error": "Error",
+    "syncResult": "{imported} new documents imported (of {docs} checked).",
+    "unmatched": "Codes not found in WMS:",
+    "otherPrograms": "Using a different program? Export your sales to Excel and use"
+  },
+  "reports": {
+    "tabs": {
+      "valuation": "Stock value",
+      "abc": "Best sellers (ABC)",
+      "dead": "Dead stock",
+      "margins": "Margins"
+    },
+    "period": "Last {n} days",
+    "export": "Export CSV",
+    "cols": {
+      "product": "Product",
+      "category": "Category",
+      "qty": "Quantity",
+      "cost": "Cost",
+      "value": "Value",
+      "class": "Class",
+      "units": "Units",
+      "revenue": "Revenue",
+      "cumulative": "Cumulative",
+      "lastSale": "Last sale",
+      "profit": "Profit",
+      "margin": "Margin"
+    },
+    "valuation": {
+      "total": "Stock value at cost",
+      "products": "Products",
+      "missingCost": "Products without cost price",
+      "byCategory": "By category"
+    },
+    "abc": {
+      "explain": "A: the few products that bring 80% of revenue. B: the next 15%. C: the long tail. Keep A always in stock; question C.",
+      "class": "Class {c}",
+      "products": "{n} products",
+      "ofRevenue": "{p}% of revenue",
+      "noSales": "{n} products had no sales in this period."
+    },
+    "dead": {
+      "explain": "In stock, but nothing sold for {n} days — money tied up on the shelf.",
+      "tied": "Money tied up",
+      "never": "never",
+      "none": "No dead stock. Everything moves."
+    },
+    "margins": {
+      "profit": "Gross profit",
+      "avg": "Average margin",
+      "none": "Needs sales with prices and products with a cost price."
+    }
+  },
+  "onboarding": {
+    "eyebrow": "Getting started",
+    "title": "Welcome, {name}",
+    "lead": "Three steps and WMS starts working for you: stock that updates itself, reorder alerts and forecasts.",
+    "steps": {
+      "products": {
+        "title": "Add your products",
+        "body": "Import them from Excel in one go, or add the first few by hand.",
+        "cta": "Import products",
+        "short": "Products"
+      },
+      "suppliers": {
+        "title": "Add your suppliers",
+        "body": "So purchase orders go out by email and reorders are grouped per supplier.",
+        "cta": "Add suppliers",
+        "short": "Suppliers"
+      },
+      "orders": {
+        "title": "Record your first order",
+        "body": "A purchase brings stock in; a sale takes it out.",
+        "cta": "New order",
+        "short": "First order"
+      },
+      "sales_source": {
+        "short": "Connect your sales"
+      },
+      "team": {
+        "short": "Invite your team"
+      }
+    },
+    "demo": {
+      "title": "Just looking around?",
+      "body": "Open a separate demo business with 4 months of sample data. Your own data stays untouched.",
+      "cta": "Try with demo data",
+      "creating": "Preparing demo…",
+      "bannerTitle": "Demo data.",
+      "bannerBody": "Nothing here is real — explore freely.",
+      "back": "Back to my business",
+      "delete": "Delete demo",
+      "confirmDelete": "Delete the demo business and all its sample data?"
+    },
+    "skip": "Skip, I'll explore on my own",
+    "checklistTitle": "Finish setting up",
+    "progress": "{done} of {total} done",
+    "hide": "Hide"
   }
 }

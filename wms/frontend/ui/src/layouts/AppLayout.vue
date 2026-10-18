@@ -2,6 +2,7 @@
 import Sidebar from '@/components/Sidebar.vue'
 import Topbar  from '@/components/Topbar.vue'
 import { useAuthStore } from '@/stores/auth'
+import DemoBanner from '@/components/onboarding/DemoBanner.vue'
 
 const auth = useAuthStore()
 </script>
@@ -10,6 +11,7 @@ const auth = useAuthStore()
   <div class="layout">
     <Sidebar />
     <div class="main">
+      <DemoBanner />
       <Topbar />
       <div class="content">
         <router-view :key="auth.currentBusiness?.id" />

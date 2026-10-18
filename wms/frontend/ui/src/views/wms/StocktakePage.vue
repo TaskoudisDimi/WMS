@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore, apiErrorMessage } from '@/stores/auth'
 import { api } from '@/services/api'
 import BarcodeScanner from '@/components/BarcodeScanner.vue'
+import { useOnline } from '@/composables/useNetwork'
 
 interface Item { quantity: number; products: { id: string; sku: string; name: string; unit: string; barcode: string | null } }
 interface Line { product_id: string; sku: string; name: string; unit: string; system: number; counted: number | null }
@@ -12,6 +13,30 @@ const { t } = useI18n()
 const auth = useAuthStore()
 const businessId = computed(() => auth.currentBusiness?.id ?? '')
 const draftKey = computed(() => `stocktake:${businessId.value}`)
+// Counts applied without signal wait here and are sent when the connection returns.
+// Sending twice is harmless: the API takes absolute counts, not differences.
+const queueKey = computed(() => `stocktake-queue:${businessId.value}`)
+const online = useOnline()
+const queued = ref(0)
+
+type Payload = { business_id: string; note: string | null; lines: { product_id: string; counted: number | null }[] }
+const readQueue = (): Payload[] => { try { return JSON.parse(localStorage.getItem(queueKey.value) || '[]') } catch { return [] } }
+const writeQueue = (q: Payload[]) => { try { localStorage.setItem(queueKey.value, JSON.stringify(q)) } catch { /* ignore */ } queued.value = q.length }
+
+async function flushQueue() {
+  const q = readQueue()
+  if (!q.length || !navigator.onLine) { queued.value = q.length; return }
+  let sent = 0
+  while (q.length) {
+    try { await api.post('/inventory/stocktake', q[0]); q.shift(); sent++ } catch { break }
+  }
+  writeQueue(q)
+  if (sent) {
+    message.value = { type: 'success', text: t('stocktake.syncedOffline', { n: sent }) }
+    items.value = (await api.get('/inventory', { params: { business_id: businessId.value } })).data
+  }
+}
+watch(online, v => { if (v) flushQueue() })
 
 const items = ref<Item[]>([])
 const lines = ref<Line[]>([])
@@ -28,6 +53,7 @@ onMounted(async () => {
     const saved = JSON.parse(localStorage.getItem(draftKey.value) || '[]') as Line[]
     lines.value = saved.map(l => ({ ...l, system: items.value.find(i => i.products.id === l.product_id)?.quantity ?? l.system }))
   } catch { /* no draft */ }
+  flushQueue()
 })
 
 watch(lines, v => {
@@ -66,17 +92,26 @@ const differences = computed(() => counted.value.filter(l => l.counted !== l.sys
 
 async function apply() {
   applying.value = true; message.value = null
+  const payload: Payload = {
+    business_id: businessId.value, note: note.value || null,
+    lines: counted.value.map(l => ({ product_id: l.product_id, counted: l.counted })),
+  }
+  const queueIt = () => {
+    writeQueue([...readQueue(), payload])
+    lines.value = []
+    message.value = { type: 'success', text: t('stocktake.queued') }
+  }
+  if (!navigator.onLine) { queueIt(); applying.value = false; return }
   try {
-    const r = await api.post('/inventory/stocktake', {
-      business_id: businessId.value, note: note.value || null,
-      lines: counted.value.map(l => ({ product_id: l.product_id, counted: l.counted })),
-    })
+    const r = await api.post('/inventory/stocktake', payload)
     message.value = { type: 'success', text: t('stocktake.applied', { n: r.data.changed.length }) }
     lines.value = []
     const inv = await api.get('/inventory', { params: { business_id: businessId.value } })
     items.value = inv.data
   } catch (e) {
-    message.value = { type: 'error', text: apiErrorMessage(e) || t('common.error') }
+    // No response at all = network dropped mid-request → keep it for later
+    if ((e as { response?: unknown }).response === undefined) queueIt()
+    else message.value = { type: 'error', text: apiErrorMessage(e) || t('common.error') }
   } finally { applying.value = false }
 }
 
@@ -114,6 +149,9 @@ function clearAll() {
       </div>
     </div>
 
+    <p v-if="!online || queued" class="ui-alert ui-alert--warn">
+      {{ !online ? t('stocktake.offline') : '' }} {{ queued ? t('stocktake.pending', { n: queued }) : '' }}
+    </p>
     <p v-if="message" class="ui-alert" :class="message.type === 'error' ? 'ui-alert--error' : 'ui-alert--success'">{{ message.text }}</p>
 
     <div class="ui-card">
