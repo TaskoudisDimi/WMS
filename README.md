@@ -16,12 +16,22 @@ reorder planning, customer analytics, e-shop sync and AI helpers. Greek and Engl
 - **Barcode scanning** with the phone camera or a USB scanner
 - **Stock-take**: count by scanning, apply only the differences
 
+**Suppliers & purchasing**
+- Suppliers with contacts, lead time, minimum order; products with minimum quantity and pack size
+- Purchase orders as **PDF**, **emailed to the supplier** from the app (replies go to you)
+
+**Sales from your invoicing software**
+- **Elorus**: issued documents are pulled every 15 minutes and take stock out (matched by product code)
+- **Any other program** (Epsilon, SoftOne, Prisma, Oxygen…): import a sales export (Excel/CSV);
+  each document is imported once; past sales can be recorded for forecasts without touching stock
+
 **Planning & insights**
 - Per-product **demand forecast** from the app's own sales (weekday pattern, safety stock)
 - **Reorder suggestions** with quantity and order-by date → draft purchase orders per supplier
 - **Unusual activity**: sudden sales drops/spikes, stock lost in recounts, revenue drop
 - Customer analysis (RFM segments) and CSV-based sales forecast (Random Forest)
 - **Daily alert emails** to owners/admins
+- **Reports**: stock value at cost, ABC analysis, dead stock (no sales in 90 days), margins; CSV export
 
 **AI (Claude API, optional)**
 - **Scan an invoice / delivery note** (photo or PDF) → lines matched to products → purchase order
@@ -31,6 +41,10 @@ reorder planning, customer analytics, e-shop sync and AI helpers. Greek and Engl
 **Team & integrations**
 - Roles: owner / admin / member, invites by email, switch between businesses
 - **WooCommerce and Shopify**: paid orders take stock out automatically (by SKU)
+
+**Getting started & mobile**
+- First-run guide (products → suppliers → first order) and **demo data in a separate business**
+- **Installable app (PWA)**; stock-take works **without signal** and syncs when back online
 
 **Account & compliance**
 - Email/password auth with confirmation and password reset (Supabase Auth, httpOnly cookies)
@@ -103,7 +117,8 @@ DEPLOY_DIR=/var/www/wms
    ```
 2. **`wms/backend/.env`** on the server — see [`.env.example`](wms/backend/.env.example):
    `DATABASE_URL`, `FRONTEND_URL=https://wms.task-code.com`, `COOKIE_SECURE=true`,
-   `SMTP_*`, `ANTHROPIC_API_KEY`.
+   `SMTP_*`, `ANTHROPIC_API_KEY`, `SENTRY_DSN`. For browser errors too, put `VITE_SENTRY_DSN`
+   in `wms/frontend/ui/.env.production.local` (see `.env.production.example`).
 3. **Supabase dashboard**
    - Authentication → URL Configuration: Site URL `https://wms.task-code.com`; Redirect URLs
      `https://wms.task-code.com/login` and `https://wms.task-code.com/reset-password`
@@ -112,7 +127,10 @@ DEPLOY_DIR=/var/www/wms
      sender only delivers to your own team and is rate-limited.
 4. **Legal details** — fill in `wms/frontend/ui/src/config/site.ts` (legal name, VAT number,
    address, contact email) and have the texts in `src/legal/documents.ts` reviewed.
-5. Run `./deploy.sh`.
+5. **Monitoring** — create a free [sentry.io](https://sentry.io) account with two projects
+   (FastAPI and Vue) for the DSNs above. Uptime: `.github/workflows/uptime.yml` checks the site
+   every 10 minutes from GitHub; failures email you (GitHub → Settings → Notifications → Actions).
+6. Run `./deploy.sh`.
 
 ### What runs on the server
 
@@ -121,6 +139,7 @@ DEPLOY_DIR=/var/www/wms
 | `wms-backend.service` | uvicorn on port 8001 (API + built frontend) |
 | `wms-alerts.timer` | 07:30 Athens — daily alert emails (`scripts/send_alerts.py`) |
 | `wms-backup.timer` | 03:15 Athens — `scripts/backup_db.sh` → `/var/backups/wms`, 14 days kept |
+| `wms-invoicing.timer` | every 15 min — pull new documents from Elorus (`scripts/sync_invoicing.py`) |
 
 ```bash
 systemctl status wms-backend
@@ -160,6 +179,16 @@ Firewall: `ufw allow from 172.18.0.0/16 to any port 8001`. DNS (Cloudflare): A r
 `wms` → `188.245.64.189`, DNS only.
 
 ---
+
+## Invoicing software
+
+**Elorus** — Settings → Integrations → Elorus: API key (Elorus → User profile) and organization ID.
+Only documents issued after connecting reduce stock; optionally the last 90 days are imported for
+forecasts without changing stock. Product codes in Elorus must match WMS SKUs (or barcodes).
+Not handled yet: credit notes (returns) and documents voided after import.
+
+**Other programs** — Orders → Import sales: an Excel/CSV export with one row per document line
+(document no., date, customer, product code, quantity, price). Re-uploading the same file is safe.
 
 ## E-shop integrations
 
@@ -212,10 +241,14 @@ Every endpoint needs the `access_token` cookie except auth and the e-shop webhoo
 | Products | `GET/POST /api/products`, `POST /api/products/import`, `GET /api/products/lookup`, `PATCH/DELETE /api/products/{id}` |
 | Inventory | `GET /api/inventory`, `POST /api/inventory/movement`, `GET /api/inventory/movements · lots · anomalies`, `GET /api/inventory/reorder-suggestions`, `GET /api/inventory/forecast/{product}`, `POST /api/inventory/reorder/purchase-orders`, `POST /api/inventory/stocktake` |
 | Orders | `GET/POST /api/orders`, `GET /api/orders/{id}`, `PATCH /api/orders/{id}/status`, `POST /api/orders/{id}/complete` |
+| Suppliers | `GET/POST /api/suppliers`, `PATCH/DELETE /api/suppliers/{id}` |
+| Purchasing | `GET /api/orders/{id}/pdf`, `POST /api/orders/{id}/send`, `POST /api/orders/import-sales` |
+| Reports | `GET /api/reports?days=90` |
+| Onboarding | `GET /api/onboarding`, `POST /api/onboarding/dismiss`, `POST /api/onboarding/demo` |
 | Analytics | `GET /api/customers/analysis`, `/api/datasets…`, `/api/predictions…` |
 | Alerts | `GET /api/alerts/preview`, `POST /api/alerts/test` |
-| Integrations | `GET/POST /api/integrations`, `PATCH/DELETE /api/integrations/{id}`, `POST /api/integrations/webhook/{id}` (HMAC) |
+| Integrations | `GET/POST /api/integrations`, `POST /api/integrations/elorus`, `POST /api/integrations/{id}/sync`, `PATCH/DELETE /api/integrations/{id}`, `POST /api/integrations/webhook/{id}` (HMAC) |
 | AI | `GET /api/ai/status`, `POST /api/ai/scan-invoice · chat · draft-message` |
-| Health | `GET /api/health` |
+| Health | `GET /api/health` (`?deep=1` also checks the database) |
 
 Interactive docs: http://localhost:8000/docs when running locally.
