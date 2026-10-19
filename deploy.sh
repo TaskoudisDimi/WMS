@@ -58,7 +58,6 @@ if ! grep -qE '^DATABASE_URL=.+' wms/backend/.env 2>/dev/null; then
   echo "  ✗ DATABASE_URL missing in wms/backend/.env (needed for migrations). Nothing was changed." >&2; exit 1
 fi
 command -v psql >/dev/null || { echo "  ✗ psql not installed (apt install postgresql-client). Nothing was changed." >&2; exit 1; }
-changed() { ! git -C "$DEPLOY_DIR" diff --quiet "$OLD" HEAD -- "$@"; }
 
 OLD=$(git rev-parse HEAD)
 git pull -q --ff-only
@@ -69,22 +68,28 @@ BACKEND="$DEPLOY_DIR/wms/backend"
 FRONTEND="$DEPLOY_DIR/wms/frontend/ui"
 
 cd "$BACKEND"
+# Install when what's installed differs from the requirements (not when git says they
+# changed) — so a manual `git pull` beforehand can't leave packages missing.
 if [[ ! -x venv/bin/python ]]; then
   step "creating virtualenv"
   python3.12 -m venv venv 2>/dev/null || python3 -m venv venv
-  venv/bin/pip install -q -r requirements.txt
-elif changed wms/backend/requirements.txt; then
+fi
+REQ_HASH=$(sha256sum requirements.txt | cut -d' ' -f1)
+if [[ "$(cat venv/.req-hash 2>/dev/null)" != "$REQ_HASH" ]]; then
   step "installing Python packages"
   venv/bin/pip install -q -r requirements.txt
+  echo "$REQ_HASH" > venv/.req-hash
 fi
 
 step "database migrations"
 scripts/migrate.sh | sed 's/^/     /'
 
 cd "$FRONTEND"
-if [[ ! -d node_modules ]] || changed wms/frontend/ui/package-lock.json; then
+LOCK_HASH=$(sha256sum package-lock.json | cut -d' ' -f1)
+if [[ "$(cat node_modules/.lock-hash 2>/dev/null)" != "$LOCK_HASH" ]]; then
   step "installing npm packages"
   npm ci --silent
+  echo "$LOCK_HASH" > node_modules/.lock-hash
 fi
 step "building frontend"
 npm run build-only --silent >/dev/null
